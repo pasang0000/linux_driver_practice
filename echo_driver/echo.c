@@ -2,6 +2,7 @@
 #include <linux/fs.h>
 #include <asm/uaccess.h>        /* for put_user */
 #include <linux/delay.h>        /* msleep */
+#include <linux/completion.h>   /* completion */
 
 // module attributes
 MODULE_LICENSE("GPL");  // this avoid kernel taint warning
@@ -19,6 +20,8 @@ static ssize_t  __write(struct file *, const char *, size_t, loff_t *);
 static int __release_(struct inode *, struct file *);
 
 struct echo_device {
+    struct completion   comp;
+
     char    buf[1024];
     int     open;
     int     pos;
@@ -49,7 +52,9 @@ int init_module(void)
     printk(KERN_INFO DEV_NAME " device registered.\n");
     printk(KERN_INFO "Major: %d\n", maj);
 
+    /* Initialize the device structure */
     memset(&_dev, 0, sizeof(_dev));
+    init_completion(&_dev.comp);
 
     return 0;
 }
@@ -73,7 +78,17 @@ static int __open(struct inode *inode, struct file *file)
 static ssize_t  __read(struct file *file, char *buf, size_t len, loff_t *off)
 {
     int count = 0;
-    while (len && (_dev.buf[_dev.pos] != 0))
+    int ret;
+
+    /* no data to read */
+    while (_dev.buf[_dev.pos] == '\0')
+    {
+        ret = wait_for_completion_interruptible(&_dev.comp);
+        if (ret == -ERESTARTSYS)
+            return ret;
+    }
+
+    while (len && (_dev.buf[_dev.pos] != 0 /* same to '\0' */))
     {
         put_user(_dev.buf[_dev.pos], buf++);  // copy a byte from kernel space to user space
         count++;
@@ -92,6 +107,7 @@ static ssize_t  __write(struct file *file, const char *buf, size_t len, loff_t *
         _dev.buf[i] = buf[i];
     }
     _dev.buf[i] = '\0';
+    complete(&_dev.comp);
     return i;
 }
 
