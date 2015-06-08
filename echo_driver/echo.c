@@ -3,6 +3,7 @@
 #include <asm/uaccess.h>        /* for put_user */
 #include <linux/delay.h>        /* msleep */
 #include <linux/completion.h>   /* completion */
+#include <linux/mutex.h>        /* mutex */
 
 // module attributes
 MODULE_LICENSE("GPL");  // this avoid kernel taint warning
@@ -20,6 +21,7 @@ static ssize_t  __write(struct file *, const char *, size_t, loff_t *);
 static int __release_(struct inode *, struct file *);
 
 struct echo_device {
+    struct mutex        lock;
     struct completion   comp;
 
     char    buf[1024];
@@ -55,6 +57,7 @@ int init_module(void)
     /* Initialize the device structure */
     memset(&_dev, 0, sizeof(_dev));
     init_completion(&_dev.comp);
+    mutex_init(&_dev.lock);
 
     return 0;
 }
@@ -80,11 +83,19 @@ static ssize_t  __read(struct file *file, char *buf, size_t len, loff_t *off)
     int count = 0;
     int ret;
 
+    ret = mutex_lock_interruptible(&_dev.lock);
+    if (ret == -EINTR)
+        return ret;
+
     /* no data to read */
     while (_dev.buf[_dev.pos] == '\0')
     {
+        mutex_unlock(&_dev.lock);
         ret = wait_for_completion_interruptible(&_dev.comp);
         if (ret == -ERESTARTSYS)
+            return ret;
+        ret = mutex_lock_interruptible(&_dev.lock);
+        if (ret == -EINTR)
             return ret;
     }
 
@@ -95,19 +106,26 @@ static ssize_t  __read(struct file *file, char *buf, size_t len, loff_t *off)
         len--;
         _dev.pos++;
     }
+    mutex_unlock(&_dev.lock);
     return count;
 }
 
 // called when 'write' system call is called on the file
 static ssize_t  __write(struct file *file, const char *buf, size_t len, loff_t *off)
 {
-    int i;
+    int i, ret;
+
+    ret = mutex_lock_interruptible(&_dev.lock);
+    if (ret == -EINTR)
+        return ret;
+
     for (i = _dev.pos = 0; i < len; i++)
     {
         _dev.buf[i] = buf[i];
     }
     _dev.buf[i] = '\0';
     complete(&_dev.comp);
+    mutex_unlock(&_dev.lock);
     return i;
 }
 
