@@ -8,7 +8,7 @@ MODULE_LICENSE("GPL");  // this avoid kernel taint warning
 MODULE_DESCRIPTION("Echo devier driver");
 MODULE_AUTHOR("Sangho Park");
 
-#define DEV_MAJOR   0
+#define DEV_MAJOR   250
 #define DEV_NAME    "echo"
 
 // file_operations
@@ -18,9 +18,13 @@ static ssize_t  __read(struct file *, char *, size_t, loff_t *);
 static ssize_t  __write(struct file *, const char *, size_t, loff_t *);
 static int __release_(struct inode *, struct file *);
 
-static char     _buf[1024];
-static int      _open = 0;
-static int      _pos = 0;
+struct echo_device {
+    char    buf[1024];
+    int     open;
+    int     pos;
+    int     end;
+};
+static struct echo_device   _dev;
 
 // structure containing callbacks
 static struct file_operations fops =
@@ -45,6 +49,8 @@ int init_module(void)
     printk(KERN_INFO DEV_NAME " device registered.\n");
     printk(KERN_INFO "Major: %d\n", maj);
 
+    memset(&_dev, 0, sizeof(_dev));
+
     return 0;
 }
 
@@ -58,8 +64,8 @@ void cleanup_module(void)
 // called when 'open' system call is called on the device file
 static int __open(struct inode *inode, struct file *file)
 {
-    _open++;
-    printk(KERN_INFO DEV_NAME " opened %d times\n", _open);
+    _dev.open++;
+    printk(KERN_INFO DEV_NAME " opened %d times\n", _dev.open);
     return 0;
 }
 
@@ -67,12 +73,12 @@ static int __open(struct inode *inode, struct file *file)
 static ssize_t  __read(struct file *file, char *buf, size_t len, loff_t *off)
 {
     int count = 0;
-    while (len && (_buf[_pos] != 0))
+    while (len && (_dev.buf[_dev.pos] != 0))
     {
-        put_user(_buf[_pos], buf++);  // copy a byte from kernel space to user space
+        put_user(_dev.buf[_dev.pos], buf++);  // copy a byte from kernel space to user space
         count++;
         len--;
-        _pos++;
+        _dev.pos++;
     }
     return count;
 }
@@ -81,11 +87,11 @@ static ssize_t  __read(struct file *file, char *buf, size_t len, loff_t *off)
 static ssize_t  __write(struct file *file, const char *buf, size_t len, loff_t *off)
 {
     int i;
-    for (i = _pos = 0; i < len; i++)
+    for (i = _dev.pos = 0; i < len; i++)
     {
-        _buf[i] = buf[i];
+        _dev.buf[i] = buf[i];
     }
-    _buf[i] = '\0';
+    _dev.buf[i] = '\0';
     return i;
 }
 
